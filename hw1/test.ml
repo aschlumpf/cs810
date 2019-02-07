@@ -46,18 +46,22 @@ let examples : int -> (string * string * string * tc_assert) = function
   | 10 -> "((lam f. (lam x. (f (f x))) : (bool -> bool) -> bool -> bool)
             (lam x. x))",
           "bool -> bool", "double apply identity", Checks
+  | 11 -> "(if true then (lam x. x) else (lam y. y) : bool -> bool)",
+          "bool -> bool", "TDecl with if", Checks
 
-  | 11 -> "(x : bool)",
+  | 12 -> "(x : bool)",
           "bool", "unbound annotated variable", Fails
 
-  | 12 -> "(if (x : bool) then (y : bool) else (z : bool))",
+  | 13 -> "(if (x : bool) then (y : bool) else (z : bool))",
           "bool", "if with unbound variables", Fails
 
-  | 13 -> "(lam x. if x then x else (lam x. x : bool -> bool) : bool -> bool)",
+  | 14 -> "(lam x. if x then x else (lam x. x : bool -> bool) : bool -> bool)",
           "bool", "if with different branch types", Fails
 
-  | 14 -> "(true false)",
+  | 15 -> "(true false)",
           "bool", "true applied to false", Fails
+  | 16 -> "(lam x. x : bool)",
+          "bool", "abstraction declared with non-function type", Fails
 
   | n  -> failwith @@ "Expression " ^ string_of_int n ^ " not defined."
 

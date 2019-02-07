@@ -10,7 +10,7 @@ module Ctx = Map.Make(String)
 let domain : texpr -> texpr error = fun t ->
   match t with 
     | FuncType (a, b) -> OK a
-    | _ -> Error "Not a function"
+    | _ ->  Error "Not a function"
 
 let codomain : texpr -> texpr error = fun t ->
   match t with 
@@ -20,13 +20,13 @@ let codomain : texpr -> texpr error = fun t ->
 let de_ok = fun e ->
   match e with 
     | OK x -> x
-    | _ -> failwith "code should not reach this point"
+    | Error e -> failwith "something went wrong"
 
 let rec synthesize : texpr Ctx.t -> term -> texpr error = fun gamma m ->
   (match m with
     | CstTrue ->  OK BoolType
     | CstFalse -> OK BoolType
-    | Var(x) -> (try OK (Ctx.find (name_of x) gamma)
+    | Var(x) -> (try OK (Ctx.find (name_of x) gamma) 
                 with Not_found -> Error "Type of variable could not be resolved")
     | App(t1, t2) -> 
       let type_of_t1 = synthesize gamma t1 
@@ -47,10 +47,15 @@ and check : texpr Ctx.t -> term -> texpr -> texpr error = fun gamma m sigma ->
   match m with
     | Abs(f)-> 
       let (x, t) = unbind f in
-      let type_of_t = check (Ctx.add (name_of x) (de_ok (domain sigma)) gamma) t (de_ok (codomain sigma)) in 
-      (match type_of_t with 
-      | t when (t = codomain sigma) -> OK sigma 
-      | _ -> Error "Invalid abstraction")
+      let dom = domain sigma in 
+      let codom = codomain sigma in 
+      (match dom,codom with 
+        | OK d, OK cd ->
+            let type_of_t = check (Ctx.add (name_of x) d gamma) t cd in 
+            (match type_of_t with 
+              | t when (t = codom) -> OK sigma  
+              | _ -> Error "Invalid abstraction")
+        | _ -> Error "Abstraction must be a function type.")
     | ITE(cond, t1, t2) -> 
       (match check gamma cond BoolType with
         | OK BoolType -> 
@@ -59,7 +64,7 @@ and check : texpr Ctx.t -> term -> texpr -> texpr error = fun gamma m sigma ->
           if (type_of_t1 = type_of_t2)
           then OK sigma 
           else Error "Types of if evaluations do not coincide."
-        | _ -> Error "Type of condition must be bool.")
+        | _ -> Error "Type of if condition must be a bool type.")
     | _ -> 
       let type_of_m = synthesize gamma m in 
       (match type_of_m with 
