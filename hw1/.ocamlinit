@@ -1,0 +1,13 @@
+#use "topfind";;
+#directory "_build";;
+#require "bindlib";;
+#require "oUnit";;
+open Ast;;
+open Tc;;
+#load_rec "test.cmo";;
+let chk = fun prog -> tc @@ Test.parse_term prog;; 
+(* Added by OPAM. *)
+let () =
+  try Topdirs.dir_directory (Sys.getenv "OCAML_TOPLEVEL_PATH")
+  with Not_found -> ()
+;;
