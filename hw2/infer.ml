@@ -307,18 +307,50 @@ let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
                         let sbody = apply_to_expr subs b_expr in
                         let stype = apply_to_texpr subs b_type in 
                         OK ((z+2), (gamma, Letrec(dom, f, param, cod, sdef, sbody), stype))
-                      | UError(x,y) -> failwith "")
+                      | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
                   | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y))))
           | None -> 
             (match lookup b_gamma f with 
               (* Case 3 *)
-              | Some fb_type -> failwith "case 3"
+              | Some fb_type -> 
+                let domain = fresh_name z in 
+                (match (mgu [(fb_type, (FuncType(VarType domain, d_type)))]) with 
+                  | UOk subs1 -> 
+                    apply_to_env subs1 d_gamma;
+                    apply_to_env subs1 b_gamma;
+                    (match mgu (compat b_gamma d_gamma) with 
+                      | UOk subs2 ->
+                        let subs = join [subs1; subs2] in 
+                        apply_to_env subs b_gamma;
+                        apply_to_env subs d_gamma;
+                        let gamma = join [b_gamma; d_gamma] in 
+                        let dom = apply_to_texpr subs (VarType domain) in 
+                        let cod = apply_to_texpr subs d_type in
+                        let sdef = apply_to_expr subs d_expr in 
+                        let sbody = apply_to_expr subs b_expr in
+                        let stype = apply_to_texpr subs b_type in 
+                        OK ((z+1), (gamma, Letrec(dom, f, param, cod, sdef, sbody), stype))
+                      | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
+                  | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
               (* Case 4 *)
-              | None -> failwith "case 4"))
+              | None ->
+                let domain = fresh_name z in 
+                let codomain = fresh_name (z+1) in  
+                (match (mgu (compat b_gamma d_gamma)) with 
+                  | UOk subs ->
+                    apply_to_env subs b_gamma;
+                    apply_to_env subs d_gamma;
+                    let gamma = join [b_gamma; d_gamma] in 
+                    let dom = apply_to_texpr subs (VarType domain) in 
+                    let cod = apply_to_texpr subs (VarType codomain) in
+                    let sdef = apply_to_expr subs d_expr in 
+                    let sbody = apply_to_expr subs b_expr in
+                    let stype = apply_to_texpr subs b_type in
+                    OK ((z+2), (gamma, Letrec(dom, f, param, cod, sdef, sbody), stype)) 
+                  | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))))
       | Error x -> Error x)
     | Error x -> Error x) 
-  | BeginEnd(es) -> failwith ""
-
+  | BeginEnd(es) -> failwith "not implemented"
 
 let string_of_typing_judgement tj = let (subs, e, t) = tj in
   (string_of_subs subs)^"|- "^(string_of_expr e)^": "^ (string_of_texpr t)
