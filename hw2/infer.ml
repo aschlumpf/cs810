@@ -1,3 +1,5 @@
+(* Alex Schlumpf 
+   I pledge my honor that I have abided by the Stevens Honor System *)
 open Unification
 open Subs
 open Ast
@@ -7,7 +9,14 @@ type 'a error = OK of 'a | Error of string
 
 type typing_judgement = subst*expr*texpr
 
+exception InfError of string
+exception UniError of Ast.texpr*Ast.texpr
+
+
 let fresh_name (n:int) : string = "_V" ^ (string_of_int n)
+
+let apply_all (exp:Ast.expr) (subs:Subs.subst) : (Ast.expr) = 
+  apply_to_expr subs exp
 
 let un_tag (tj : 'a error) = match tj with 
   | OK tj -> tj 
@@ -17,6 +26,8 @@ let un_some s = match s with
   | Some x -> x 
   | None -> failwith "Expected a Some"
 
+let grab_gammas (gammas:subst list) (tj:typing_judgement) : subst list = let (gamma, _, _) = tj in gamma::gammas
+
 let find_common_name (b_name:string) (b_type:Ast.texpr) (tup:subst*((texpr*texpr) list) ) : subst*((texpr*texpr) list) = 
   let (g2, accum) = tup in
   match lookup g2 b_name with 
@@ -24,6 +35,19 @@ let find_common_name (b_name:string) (b_type:Ast.texpr) (tup:subst*((texpr*texpr
     | None -> (g2, accum)
 
 let compat g1 g2 = let (_, res) = Hashtbl.fold find_common_name g1 (g2, []) in res
+
+let rec compat_all gammas  = match gammas with 
+  | first::second::rest ->
+    (match mgu (compat first second) with 
+      | UOk subs -> compat_all (subs  :: rest)
+      | UError(x,y) -> print_string "compat"; raise (UniError(x,y)))
+  | h::[] -> h 
+  | [] -> create ()
+
+let rec last xs = match xs with 
+  | h::[] -> h 
+  | h::t -> last t 
+  | _ -> failwith "no last in singleton"
 
 
 let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
@@ -164,7 +188,9 @@ let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
                         let sdef = apply_to_expr subs d_exp in 
                         let sbody = apply_to_expr subs b_exp in 
                         let stexp = apply_to_texpr subs b_texp in 
-                        OK ((z), (join [b_gamma; d_gamma], Let(x, sdef, sbody), stexp))
+                        let gamma = join [b_gamma; d_gamma] in 
+                        remove gamma x;
+                        OK ((z), (gamma, Let(x, sdef, sbody), stexp))
                       | UError(x,y) ->  Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
 
                   | UError (x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
@@ -245,7 +271,84 @@ let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
             | Error x -> Error x)
         | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
     | Error x -> Error x)
-  | Letrec(tRes, x, param, tPara, def, body) -> failwith "not implemented!"
+  | Letrec(tRes, f, param, tPara, def, body) -> 
+    (match infer' def n with 
+      | OK (m, (d_gamma, d_expr, d_type)) -> 
+      (match infer' body m with 
+        | OK (z, (b_gamma, b_expr, b_type)) ->
+          (match ((lookup b_gamma f), (lookup d_gamma f)) with 
+            | Some f1, Some f2 -> 
+              (match (mgu [(f1, FuncType(tPara, tRes)); (f1, f2)]) with 
+                | UOk subs1 -> 
+                  apply_to_env subs1 d_gamma;
+                  apply_to_env subs1 b_gamma;
+                  (match mgu (compat b_gamma d_gamma) with 
+                    | UOk subs2 -> 
+                      let subs = join [subs1; subs2] in 
+                      apply_to_env subs d_gamma;
+                      apply_to_env subs b_gamma;
+                      let gamma = join [d_gamma; b_gamma] in 
+                      let sdef = apply_to_expr subs d_expr in 
+                      let sbody = apply_to_expr subs b_expr in 
+                      let stype = apply_to_texpr subs b_type in 
+                      remove gamma f;
+                      remove gamma param;
+                      OK (z, (gamma, Letrec(tRes, f, param, tPara, sdef, sbody), stype))
+                    | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
+                | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
+            | Some f1, None ->               
+              (match (mgu [(f1, FuncType(tPara, tRes)); ]) with 
+                  | UOk subs1 -> 
+                    apply_to_env subs1 d_gamma;
+                    apply_to_env subs1 b_gamma;
+                    (match mgu (compat b_gamma d_gamma) with 
+                      | UOk subs2 -> 
+                        let subs = join [subs1; subs2] in 
+                        apply_to_env subs d_gamma;
+                        apply_to_env subs b_gamma;
+                        let gamma = join [d_gamma; b_gamma] in 
+                        let sdef = apply_to_expr subs d_expr in 
+                        let sbody = apply_to_expr subs b_expr in 
+                        let stype = apply_to_texpr subs b_type in 
+                        remove gamma f;
+                        remove gamma param;
+                        OK (z, (gamma, Letrec(tRes, f, param, tPara, sdef, sbody), stype))
+                      | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
+                  | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
+            | None, Some f2 -> 
+              (match (mgu [(f2, FuncType(tPara, tRes));]) with 
+              | UOk subs1 -> 
+                apply_to_env subs1 d_gamma;
+                apply_to_env subs1 b_gamma;
+                (match mgu (compat b_gamma d_gamma) with 
+                  | UOk subs2 -> 
+                    let subs = join [subs1; subs2] in 
+                    apply_to_env subs d_gamma;
+                    apply_to_env subs b_gamma;
+                    let gamma = join [d_gamma; b_gamma] in 
+                    let sdef = apply_to_expr subs d_expr in 
+                    let sbody = apply_to_expr subs b_expr in 
+                    let stype = apply_to_texpr subs b_type in 
+                    remove gamma f;
+                    remove gamma param;
+                    OK (z, (gamma, Letrec(tRes, f, param, tPara, sdef, sbody), stype))
+                  | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
+              | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
+            | None, None -> 
+            (match mgu (compat b_gamma d_gamma) with 
+              | UOk subs -> 
+                apply_to_env subs d_gamma;
+                apply_to_env subs b_gamma;
+                let gamma = join [d_gamma; b_gamma] in 
+                let sdef = apply_to_expr subs d_expr in 
+                let sbody = apply_to_expr subs b_expr in 
+                let stype = apply_to_texpr subs b_type in 
+                remove gamma f;
+                remove gamma param;
+                OK (z, (gamma, Letrec(tRes, f, param, tPara, sdef, sbody), stype))
+              | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y))))
+        | Error x -> Error x) 
+      | Error x -> Error x)
   (* Four cases:
     1. f is defined and run in the body.
       -f's type in the def and the body must be unifiable
@@ -283,8 +386,10 @@ let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
                         let cod = apply_to_texpr subs (VarType codomain) in
                         let sdef = apply_to_expr subs d_expr in 
                         let sbody = apply_to_expr subs b_expr in
-                        let stype = apply_to_texpr subs b_type in 
-                        OK ((z+2), (gamma, Letrec(dom, f, param, cod, sdef, sbody), stype))
+                        let stype = apply_to_texpr subs b_type in
+                        remove gamma f;
+                        remove gamma param; 
+                        OK ((z+2), (gamma, Letrec(cod, f, param, dom, sdef, sbody), stype))
                       | UError(x,y) ->  Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
                   | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
               (* Case 2 *)
@@ -306,7 +411,9 @@ let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
                         let sdef = apply_to_expr subs d_expr in 
                         let sbody = apply_to_expr subs b_expr in
                         let stype = apply_to_texpr subs b_type in 
-                        OK ((z+2), (gamma, Letrec(dom, f, param, cod, sdef, sbody), stype))
+                        remove gamma f;
+                        remove gamma param; 
+                        OK ((z+2), (gamma, Letrec(cod, f, param, dom, sdef, sbody), stype))
                       | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
                   | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y))))
           | None -> 
@@ -329,7 +436,9 @@ let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
                         let sdef = apply_to_expr subs d_expr in 
                         let sbody = apply_to_expr subs b_expr in
                         let stype = apply_to_texpr subs b_type in 
-                        OK ((z+1), (gamma, Letrec(dom, f, param, cod, sdef, sbody), stype))
+                        remove gamma f;
+                        remove gamma param; 
+                        OK ((z+1), (gamma, Letrec(cod, f, param, dom, sdef, sbody), stype))
                       | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
                   | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))
               (* Case 4 *)
@@ -346,11 +455,31 @@ let rec infer' (e:expr) (n:int): (int*typing_judgement) error =
                     let sdef = apply_to_expr subs d_expr in 
                     let sbody = apply_to_expr subs b_expr in
                     let stype = apply_to_texpr subs b_type in
-                    OK ((z+2), (gamma, Letrec(dom, f, param, cod, sdef, sbody), stype)) 
+                    remove gamma f;
+                    remove gamma param; 
+                    OK ((z+2), (gamma, Letrec(cod, f, param, dom, sdef, sbody), stype)) 
                   | UError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y)))))
       | Error x -> Error x)
     | Error x -> Error x) 
-  | BeginEnd(es) -> failwith "not implemented"
+  | BeginEnd(es) -> 
+    try (let (m, tjs) = 
+    List.fold_left infer_all (0, []) es in 
+    let gammas = List.fold_left grab_gammas [] tjs in 
+    let subs = compat_all gammas in 
+    let ses = List.map (apply_to_expr subs) es in 
+    let (_,_,last_type) = List.hd tjs in
+    let stype = apply_to_texpr subs last_type in
+    print_string (string_of_texpr stype);
+    OK (m, (subs, BeginEnd(ses), stype)))
+    with e -> (match e with 
+      | InfError x -> Error x 
+      | UniError(x,y) -> Error ("Cannot unify " ^ (string_of_texpr x) ^ " and " ^ (string_of_texpr y))
+      | _ -> Error "something happened")
+and 
+infer_all (n,accum) (expr:Ast.expr) : int*typing_judgement list= 
+  match infer' expr n with 
+    | OK (m, tj) -> (m, tj :: accum)
+    | Error x -> raise(InfError x)
 
 let string_of_typing_judgement tj = let (subs, e, t) = tj in
   (string_of_subs subs)^"|- "^(string_of_expr e)^": "^ (string_of_texpr t)
@@ -360,8 +489,6 @@ let infer_type (AProg e) =
   match infer' e 0 with
   | OK (_, tj) -> string_of_typing_judgement tj
   | Error s -> "Error! "^ s
-
-
 
 let parse s =
   let lexbuf = Lexing.from_string s in
